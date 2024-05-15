@@ -1,74 +1,78 @@
-import matplotlib.pyplot as plt
-import networkx as nx
-import osmnx as ox
 import folium
+import osmnx as ox
 import pandas as pd
+import geopandas as gpd
 import requests
-import pprint
+from folium.plugins import MarkerCluster
 
-BASE_URL = 'https://nominatim.openstreetmap.org/search?format=json'
+ox.__version__
 
-# Define your place
-place = "Timisoara, Timis, Romania"
-street = "Calea Torontalului, Timis,Romania"
+# Function to retrieve and plot hospitals and clinics with Folium
+def plot_hospitals_and_clinics(place):
+    # Download/model a street network for the specified place
+    G = ox.graph_from_place(place, network_type="drive", retain_all=True)
+    
+    # Get center coordinates for the map
+    center_lat, center_lon = ox.geocode(place)
+    
+    # Create a Folium map centered around the place
+    m = folium.Map(location=[center_lat, center_lon], zoom_start=12)
 
-# Get the boundary GeoDataFrame
-gdf = ox.geocode_to_gdf(place)
+    # Create a MarkerCluster object
+    marker_cluster = MarkerCluster().add_to(m)
 
-# Get the road network graph
-G = ox.graph_from_place(place, network_type="drive")
+    # Plot street network on Folium map
+    ox.plot_graph_folium(G, graph_map=m, edge_color="blue", edge_width=0.3, bgcolor="#333333")
+    
+    # Retrieve hospital and clinic data for the place
+    tags = {"amenity": ["hospital", "clinic"]}
+    gdf = ox.features_from_place(place, tags)
+    
+    # Base URL for the geocoding API
+    BASE_URL = 'https://nominatim.openstreetmap.org/search?format=json'
 
-# Plot the road network
-fig, ax = ox.plot_graph(
-    G,
-    show=False,
-    close=False,
-    bgcolor="#333333",
-    edge_color="w",
-    edge_linewidth=0.3,
-    node_size=0,
-)
+    # Iterate through each hospital or clinic and add markers to the map
+    for idx, row in gdf.iterrows():
+        # Construct the query parameters for the API request
+        params = {
+            "q": row["name"],
+            "format": "json",
+            "limit": 1
+        }
+        
+        # Send a GET request to the geocoding API
+        response = requests.get(BASE_URL, params=params)
+        
+        # Check if the request was successful (status code 200)
+        if response.status_code == 200:
+            # Parse the JSON response
+            data = response.json()
+            
+            # Check if any results were returned
+            if data:
+                # Extract latitude and longitude from the first result
+                latitude = float(data[0]["lat"])
+                longitude = float(data[0]["lon"])
+                
+                # Add marker to the marker cluster
+                folium.Marker([latitude, longitude]).add_to(marker_cluster)
+    
+    # Display the Folium map
+    m.save('city_map_with_hospitals_and_clinics.html')
+    print("Map with hospitals and clinics saved as city_map_with_hospitals_and_clinics.html")
 
-# Plot the boundary
-gdf.plot(ax=ax, fc="k", ec="#666666", lw=1, alpha=1, zorder=-1)
+# Read the CSV file which contains the big cities
+df = pd.read_csv('ro.csv')
 
-# Convert the graph nodes to a GeoDataFrame
-nodes = ox.graph_to_gdfs(G, edges=False)
+# Message for the user
+city_name = input("Enter the name of the city: ")
 
-G_street = ox.graph_from_address(street, network_type="drive")
-nodes_street = ox.graph_to_gdfs(G_street, edges=False)
+# Searching for the city in the data frame
+city_row = df[df['city'] == city_name]
 
-# Create a Folium map centered on the location
-m = folium.Map(location=[nodes_street['y'].mean(), nodes_street['x'].mean()], zoom_start=15)
-
-# Add the boundary as a GeoJSON layer
-folium.GeoJson(gdf).add_to(m)
-'''
-# Add nodes as points to the map
-for index, row in nodes.iterrows():
-    folium.CircleMarker(location=[row['y'], row['x']], radius=2, color='blue', fill=True).add_to(m)
-'''
-params = {
-    "q": street,
-    "format": "json"
-}
-
-response = requests.get(BASE_URL, params=params)
-if response.status_code == 200:
-    data = response.json()
-    if data:
-        latitude = float(data[0]["lat"])
-        longitude = float(data[0]["lon"])
-        print("Latitude:", latitude)
-        print("Longitude:", longitude)
-        location = float(latitude), float(longitude)
-        folium.Marker(location).add_to(m)
-    else:
-        print("No results found for the address:", street)
+if not city_row.empty:
+    # Plot hospitals and clinics for the specified city using Folium
+    plot_hospitals_and_clinics(city_name)
 else:
-    print("Error:", response.status_code)
-# Save the map to an HTML file
-m.save('map_with_points.html')
-
-# Display the map
-m
+    print("City not found in the dataset.")
+    
